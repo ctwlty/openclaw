@@ -8,6 +8,7 @@ import {
   getImageGenerationTaskProviderId,
   isActiveImageGenerationTask,
   IMAGE_GENERATION_TASK_KIND,
+  listActiveImageGenerationTasksForSession,
 } from "./image-generation-task-status.js";
 import {
   findRecentStartedMediaGenerationTaskForSession,
@@ -133,6 +134,42 @@ describe("image generation task status", () => {
     expect(details.taskKind).toBe(IMAGE_GENERATION_TASK_KIND);
     expect(details.provider).toBe("openai");
     expect(details.progressSummary).toBe("Generating image");
+  });
+
+  it("does not report completed or failed image generation tasks as active", () => {
+    taskRuntimeInternalMocks.listTasksForOwnerKey.mockReturnValue([
+      {
+        taskId: "task-succeeded",
+        runtime: "cli",
+        taskKind: IMAGE_GENERATION_TASK_KIND,
+        sourceId: "image_generate:openai",
+        requesterSessionKey: "agent:main",
+        ownerKey: "agent:main",
+        scopeKind: "session",
+        task: "completed task",
+        status: "succeeded",
+        deliveryStatus: "not_applicable",
+        notifyPolicy: "silent",
+        createdAt: Date.now(),
+      },
+      {
+        taskId: "task-failed",
+        runtime: "cli",
+        taskKind: IMAGE_GENERATION_TASK_KIND,
+        sourceId: "image_generate:openai",
+        requesterSessionKey: "agent:main",
+        ownerKey: "agent:main",
+        scopeKind: "session",
+        task: "failed task",
+        status: "failed",
+        deliveryStatus: "not_applicable",
+        notifyPolicy: "silent",
+        createdAt: Date.now(),
+      },
+    ]);
+
+    expect(findActiveImageGenerationTaskForSession("agent:main")).toBeUndefined();
+    expect(listActiveImageGenerationTasksForSession("agent:main")).toEqual([]);
   });
 
   it("can restrict active lookup to the matching image prompt", () => {

@@ -173,6 +173,7 @@ import {
   resolveRunLivenessState,
   shouldTreatEmptyAssistantReplyAsSilent,
 } from "./run/incomplete-turn.js";
+import { shouldSuppressGenericFallbackForActiveMediaTask } from "./run/media-task-fallback.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
 import { handleRetryLimitExhaustion } from "./run/retry-limit.js";
@@ -205,6 +206,64 @@ const MID_TURN_PRECHECK_CONTINUATION_PROMPT =
 const COMPACTION_CONTINUATION_RETRY_INSTRUCTION =
   "The previous attempt compacted the conversation context before producing a final user-visible answer. Continue from the compacted transcript and produce the final answer now. Do not restart from scratch, do not repeat completed work, and do not rerun tools unless the transcript clearly lacks required evidence.";
 type EmbeddedRunAttemptForRunner = Awaited<ReturnType<typeof runEmbeddedAttemptWithBackend>>;
+
+function buildGenericFallbackSuppressionResult(params: {
+  attempt: EmbeddedRunAttemptForRunner;
+  started: number;
+  agentMeta: EmbeddedPiAgentMeta;
+  aborted: boolean;
+  finalAssistantVisibleText: string | undefined;
+  finalAssistantRawText: string | undefined;
+  replayInvalid: boolean;
+  livenessState: EmbeddedRunLivenessState;
+  attemptToolSummary: ToolSummaryTrace | undefined;
+  failureSignal: EmbeddedPiRunResult["meta"]["failureSignal"] | undefined;
+}): EmbeddedPiRunResult {
+  const {
+    attempt,
+    started,
+    agentMeta,
+    aborted,
+    finalAssistantVisibleText,
+    finalAssistantRawText,
+    replayInvalid,
+    livenessState,
+    attemptToolSummary,
+    failureSignal,
+  } = params;
+
+  attempt.setTerminalLifecycleMeta?.({
+    replayInvalid,
+    livenessState,
+  });
+
+  return {
+    payloads: [{ text: SILENT_REPLY_TOKEN }],
+    meta: {
+      durationMs: Date.now() - started,
+      agentMeta,
+      aborted,
+      systemPromptReport: attempt.systemPromptReport,
+      finalPromptText: attempt.finalPromptText,
+      finalAssistantVisibleText,
+      finalAssistantRawText,
+      replayInvalid,
+      livenessState,
+      toolSummary: attemptToolSummary,
+      ...(failureSignal ? { failureSignal } : {}),
+      agentHarnessResultClassification: attempt.agentHarnessResultClassification,
+    },
+    didSendViaMessagingTool: attempt.didSendViaMessagingTool,
+    didSendDeterministicApprovalPrompt: attempt.didSendDeterministicApprovalPrompt,
+    messagingToolSentTexts: attempt.messagingToolSentTexts,
+    messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
+    messagingToolSentTargets: attempt.messagingToolSentTargets,
+    messagingToolSourceReplyPayloads: attempt.messagingToolSourceReplyPayloads,
+    heartbeatToolResponse: attempt.heartbeatToolResponse,
+    successfulCronAdds: attempt.successfulCronAdds,
+    acceptedSessionSpawns: attempt.acceptedSessionSpawns,
+  };
+}
 
 function resolveAttemptDispatchApiKey(params: {
   apiKeyInfo: ApiKeyInfo | null;
@@ -3071,6 +3130,26 @@ export async function runEmbeddedPiAgent(
             };
           }
           if (reasoningOnlyRetriesExhausted && !finalAssistantVisibleText) {
+            if (shouldSuppressGenericFallbackForActiveMediaTask(params.sessionKey)) {
+              const replayInvalid = resolveReplayInvalidForAttempt(null);
+              const livenessState: EmbeddedRunLivenessState = "working";
+              log.warn(
+                `reasoning-only retries exhausted while media generation is active: runId=${params.runId} sessionId=${params.sessionId} ` +
+                  `provider=${activeErrorContext.provider}/${activeErrorContext.model} attempts=${reasoningOnlyRetryAttempts}/${maxReasoningOnlyRetryAttempts} -> suppressing generic fallback`,
+              );
+              return buildGenericFallbackSuppressionResult({
+                attempt,
+                started,
+                agentMeta,
+                aborted,
+                finalAssistantVisibleText,
+                finalAssistantRawText,
+                replayInvalid,
+                livenessState,
+                attemptToolSummary,
+                failureSignal,
+              });
+            }
             const replayInvalid = resolveReplayInvalidForAttempt(
               "⚠️ Agent couldn't generate a response. Please try again.",
             );
@@ -3176,6 +3255,27 @@ export async function runEmbeddedPiAgent(
             continue;
           }
           if (incompleteTurnText) {
+            if (shouldSuppressGenericFallbackForActiveMediaTask(params.sessionKey)) {
+              const replayInvalid = resolveReplayInvalidForAttempt(null);
+              const livenessState: EmbeddedRunLivenessState = "working";
+              const incompleteStopReason = attempt.lastAssistant?.stopReason;
+              log.warn(
+                `incomplete turn detected while media generation is active: runId=${params.runId} sessionId=${params.sessionId} ` +
+                  `stopReason=${incompleteStopReason} payloads=${payloadCount} -> suppressing generic fallback`,
+              );
+              return buildGenericFallbackSuppressionResult({
+                attempt,
+                started,
+                agentMeta,
+                aborted,
+                finalAssistantVisibleText,
+                finalAssistantRawText,
+                replayInvalid,
+                livenessState,
+                attemptToolSummary,
+                failureSignal,
+              });
+            }
             const replayInvalid = resolveReplayInvalidForAttempt(incompleteTurnText);
             const livenessState = resolveRunLivenessState({
               payloadCount,

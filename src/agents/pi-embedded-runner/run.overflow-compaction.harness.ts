@@ -102,6 +102,9 @@ export const mockedBuildEmbeddedRunPayloads = vi.fn<
     ...args: Parameters<typeof buildEmbeddedRunPayloads>
   ) => ReturnType<typeof buildEmbeddedRunPayloads>
 >(() => []);
+export const mockedListActiveImageGenerationTasksForSession = vi.fn(() => []);
+export const mockedFindActiveMusicGenerationTaskForSession = vi.fn(() => undefined);
+export const mockedFindActiveVideoGenerationTaskForSession = vi.fn(() => undefined);
 export const mockedRunContextEngineMaintenance = vi.fn(async () => undefined);
 export const mockedSessionLikelyHasOversizedToolResults = vi.fn(() => false);
 export const mockedResolveLiveToolResultMaxChars = vi.fn(() => 32_000);
@@ -299,6 +302,12 @@ export function resetRunOverflowCompactionHarnessMocks(): void {
   mockedRunEmbeddedAttempt.mockReset();
   mockedBuildEmbeddedRunPayloads.mockReset();
   mockedBuildEmbeddedRunPayloads.mockReturnValue([]);
+  mockedListActiveImageGenerationTasksForSession.mockReset();
+  mockedListActiveImageGenerationTasksForSession.mockReturnValue([]);
+  mockedFindActiveMusicGenerationTaskForSession.mockReset();
+  mockedFindActiveMusicGenerationTaskForSession.mockReturnValue(undefined);
+  mockedFindActiveVideoGenerationTaskForSession.mockReset();
+  mockedFindActiveVideoGenerationTaskForSession.mockReturnValue(undefined);
   mockedRunContextEngineMaintenance.mockReset();
   mockedRunContextEngineMaintenance.mockResolvedValue(undefined);
   mockedSessionLikelyHasOversizedToolResults.mockReset();
@@ -586,6 +595,24 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
 
   vi.doMock("./run/payloads.js", () => ({
     buildEmbeddedRunPayloads: mockedBuildEmbeddedRunPayloads,
+  }));
+
+  vi.doMock("../image-generation-task-status.js", async (importOriginal) => ({
+    ...((await importOriginal()) as object),
+    buildActiveImageGenerationTaskPromptContextForSession: vi.fn(() => undefined),
+    listActiveImageGenerationTasksForSession: mockedListActiveImageGenerationTasksForSession,
+  }));
+
+  vi.doMock("../music-generation-task-status.js", async (importOriginal) => ({
+    ...((await importOriginal()) as object),
+    buildActiveMusicGenerationTaskPromptContextForSession: vi.fn(() => undefined),
+    findActiveMusicGenerationTaskForSession: mockedFindActiveMusicGenerationTaskForSession,
+  }));
+
+  vi.doMock("../video-generation-task-status.js", async (importOriginal) => ({
+    ...((await importOriginal()) as object),
+    buildActiveVideoGenerationTaskPromptContextForSession: vi.fn(() => undefined),
+    findActiveVideoGenerationTaskForSession: mockedFindActiveVideoGenerationTaskForSession,
   }));
 
   vi.doMock("./compaction-hooks.js", () => ({

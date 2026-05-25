@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   hasCommittedMessagingToolDeliveryEvidence,
@@ -9,6 +10,7 @@ import {
   loadRunOverflowCompactionHarness,
   mockedClassifyFailoverReason,
   mockedGlobalHookRunner,
+  mockedListActiveImageGenerationTasksForSession,
   mockedLog,
   mockedRunEmbeddedAttempt,
   mockedResolveModelAsync,
@@ -1002,6 +1004,63 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(result.payloads?.[0]?.isError).toBe(true);
     expect(result.payloads?.[0]?.text).toContain("Please try again");
     expectWarnMessageWith("reasoning-only retries exhausted");
+  });
+
+  it("suppresses generic fallback after reasoning-only exhaustion when image generation is active", async () => {
+    mockedClassifyFailoverReason.mockReturnValue(null);
+    mockedListActiveImageGenerationTasksForSession.mockReturnValue([
+      {
+        taskId: "task-image-running",
+        runtime: "cli",
+        taskKind: "image_generation",
+        sourceId: "image_generate:openai",
+        requesterSessionKey: "test-key",
+        ownerKey: "test-key",
+        scopeKind: "session",
+        task: "make a small icon",
+        status: "running",
+        deliveryStatus: "not_applicable",
+        notifyPolicy: "silent",
+        createdAt: Date.now(),
+        progressSummary: "Generating image",
+      },
+    ]);
+    mockedRunEmbeddedAttempt.mockResolvedValue(
+      makeAttemptResult({
+        assistantTexts: [],
+        lastAssistant: {
+          role: "assistant",
+          stopReason: "end_turn",
+          provider: "openai",
+          model: "gpt-5.4",
+          content: [
+            {
+              type: "thinking",
+              thinking: "internal reasoning",
+              thinkingSignature: JSON.stringify({
+                id: "rs_reasoning_active_image",
+                type: "reasoning",
+              }),
+            },
+          ],
+        } as unknown as EmbeddedRunAttemptResult["lastAssistant"],
+      }),
+    );
+
+    const result = await runEmbeddedPiAgent({
+      ...overflowBaseRunParams,
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningLevel: "on",
+      runId: "run-reasoning-only-active-image-task",
+    });
+
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(3);
+    expect(result.payloads?.[0]?.isError).not.toBe(true);
+    expect(result.payloads?.[0]?.text).toBe(SILENT_REPLY_TOKEN);
+    expect(result.payloads?.[0]?.text).not.toContain("couldn't generate a response");
+    expect(result.meta?.livenessState).toBe("working");
+    expectWarnMessageWith("suppressing generic fallback");
   });
 
   it("detects structured bullet-only plans with intent cues as planning-only GPT turns", () => {
